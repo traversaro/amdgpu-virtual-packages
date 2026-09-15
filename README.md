@@ -20,7 +20,11 @@ Example output:
 ```text
 __amdgpu=0=0
 __amdgpu_arch=11.5.1=0
+selected_gpu_compute_units=16
 ```
+
+The compute-unit count is reported as `unknown` when the selected GPU's architecture can be
+detected but its compute-unit count cannot.
 
 Related issues and PRs:
 * https://github.com/conda/ceps/pull/189

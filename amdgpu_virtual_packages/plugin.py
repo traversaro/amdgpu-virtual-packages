@@ -250,17 +250,29 @@ def _hip_architectures() -> set[str]:
     return {gfx for gfx, _ in _hip_devices()}
 
 
-def _selected_architecture(devices: list[tuple[str, int | None]]) -> str:
-    return max(
-        devices,
-        key=lambda device: (device[1] if device[1] is not None else -1, _gfx_key(device[0])),
-    )[0]
-
-
-def virtual_packages() -> list[tuple[str, str, str]]:
+def _devices() -> list[tuple[str, int | None]]:
     devices = _kfd_devices()
     if not devices:
         devices = _hip_devices()
+    return devices
+
+
+def _selected_device(devices: list[tuple[str, int | None]]) -> tuple[str, int | None]:
+    return max(
+        devices,
+        key=lambda device: (device[1] if device[1] is not None else -1, _gfx_key(device[0])),
+    )
+
+
+def _selected_architecture(devices: list[tuple[str, int | None]]) -> str:
+    return _selected_device(devices)[0]
+
+
+def virtual_packages(
+    devices: list[tuple[str, int | None]] | None = None,
+) -> list[tuple[str, str, str]]:
+    if devices is None:
+        devices = _devices()
 
     has_amdgpu = bool(devices)
     if os.name == "posix":
