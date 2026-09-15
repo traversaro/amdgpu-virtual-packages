@@ -46,10 +46,10 @@ def _gfx_version(gfx: str) -> str:
     return f"{major}.{minor}.{stepping}"
 
 
-def _kfd_architectures() -> set[str]:
-    architectures: set[str] = set()
+def _kfd_devices() -> list[tuple[str, int | None]]:
+    devices: list[tuple[str, int | None]] = []
     if not _KFD_TOPOLOGY.is_dir():
-        return architectures
+        return devices
 
     for properties in _KFD_TOPOLOGY.glob("*/properties"):
         try:
@@ -63,10 +63,22 @@ def _kfd_architectures() -> set[str]:
         if target == 0:
             continue
         try:
-            architectures.add(_gfx_from_kfd_target(target))
+            gfx = _gfx_from_kfd_target(target)
         except ValueError:
             continue
-    return architectures
+
+        simd_count = re.search(r"^simd_count\s+(\d+)\s*$", text, re.MULTILINE)
+        simd_per_cu = re.search(r"^simd_per_cu\s+(\d+)\s*$", text, re.MULTILINE)
+        if simd_count is None or simd_per_cu is None or int(simd_per_cu.group(1)) == 0:
+            compute_units = None
+        else:
+            compute_units = int(simd_count.group(1)) // int(simd_per_cu.group(1))
+        devices.append((gfx, compute_units))
+    return devices
+
+
+def _kfd_architectures() -> set[str]:
+    return {gfx for gfx, _ in _kfd_devices()}
 
 
 def _linux_has_amdgpu() -> bool:
@@ -173,21 +185,21 @@ def _load_hip_runtime():
     return None
 
 
-def _hip_architectures() -> set[str]:
+def _hip_devices() -> list[tuple[str, int | None]]:
     library = _load_hip_runtime()
     if library is None:
-        return set()
+        return []
 
     try:
         get_count = library.hipGetDeviceCount
     except AttributeError:
-        return set()
+        return []
 
     get_count.argtypes = [ctypes.POINTER(ctypes.c_int)]
     get_count.restype = ctypes.c_int
     count = ctypes.c_int()
     if get_count(ctypes.byref(count)) != 0 or count.value <= 0:
-        return set()
+        return []
 
     property_apis = []
     for symbol, offset in (
@@ -203,7 +215,15 @@ def _hip_architectures() -> set[str]:
         function.restype = ctypes.c_int
         property_apis.append((function, offset))
 
-    architectures: set[str] = set()
+    try:
+        get_attribute = library.hipDeviceGetAttribute
+    except AttributeError:
+        get_attribute = None
+    else:
+        get_attribute.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int]
+        get_attribute.restype = ctypes.c_int
+
+    devices: list[tuple[str, int | None]] = []
     for device in range(count.value):
         for get_properties, offset in property_apis:
             buffer = ctypes.create_string_buffer(4096)
@@ -215,17 +235,34 @@ def _hip_architectures() -> set[str]:
                 _gfx_key(gfx)
             except (UnicodeDecodeError, ValueError):
                 continue
-            architectures.add(gfx)
+            compute_units = None
+            if get_attribute is not None:
+                value = ctypes.c_int()
+                # hipDeviceAttributeMultiprocessorCount has the stable value 16.
+                if get_attribute(ctypes.byref(value), 16, device) == 0:
+                    compute_units = value.value
+            devices.append((gfx, compute_units))
             break
-    return architectures
+    return devices
+
+
+def _hip_architectures() -> set[str]:
+    return {gfx for gfx, _ in _hip_devices()}
+
+
+def _selected_architecture(devices: list[tuple[str, int | None]]) -> str:
+    return max(
+        devices,
+        key=lambda device: (device[1] if device[1] is not None else -1, _gfx_key(device[0])),
+    )[0]
 
 
 def virtual_packages() -> list[tuple[str, str, str]]:
-    architectures = _kfd_architectures()
-    if not architectures:
-        architectures = _hip_architectures()
+    devices = _kfd_devices()
+    if not devices:
+        devices = _hip_devices()
 
-    has_amdgpu = bool(architectures)
+    has_amdgpu = bool(devices)
     if os.name == "posix":
         has_amdgpu = has_amdgpu or _linux_has_amdgpu()
     has_amdgpu = has_amdgpu or _windows_host_has_amdgpu()
@@ -234,9 +271,9 @@ def virtual_packages() -> list[tuple[str, str, str]]:
         return []
 
     packages = [("amdgpu", "0", "0")]
-    if architectures:
-        highest = max(architectures, key=_gfx_key)
-        packages.append(("amdgpu_arch", _gfx_version(highest), "0"))
+    if devices:
+        selected = _selected_architecture(devices)
+        packages.append(("amdgpu_arch", _gfx_version(selected), "0"))
     return packages
 
 

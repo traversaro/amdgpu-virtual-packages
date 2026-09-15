@@ -5,7 +5,9 @@ A small conda plugin providing AMD GPU virtual packages:
 - `__amdgpu=0=0` when an AMD GPU is available.
 - `__amdgpu_arch=<arch>=0` with the detected GPU architecture, for example `gfx1151` as `11.5.1`.
 
-It supports Linux, Windows, and Linux under WSL. If multiple AMD GPUs are detected, `__amdgpu_arch` reports the highest architecture.
+It supports Linux, Windows, and Linux under WSL. If multiple AMD GPUs are detected,
+`__amdgpu_arch` reports the architecture of the GPU with the most compute units; architecture
+ordering breaks compute-unit-count ties.
 
 To inspect the detected virtual packages locally with [Pixi](https://pixi.sh):
 
